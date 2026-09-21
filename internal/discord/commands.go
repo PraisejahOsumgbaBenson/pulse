@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/PraisejahOsumgbaBenson/pulse/internal/feeds"
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/generate"
+	"github.com/PraisejahOsumgbaBenson/pulse/internal/scheduler"
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/store"
 	"github.com/bwmarrin/discordgo"
 )
@@ -300,7 +300,7 @@ func (b *Bot) cmdDraft(s *discordgo.Session, i *discordgo.InteractionCreate, use
 		return
 	}
 	ctx := context.Background()
-	id, err := generateOneDraft(ctx, b.deps.Store, b.deps.Feeds, b.deps.Gen)
+	id, err := scheduler.GenerateOneDraft(ctx, b.deps.Store, b.deps.Feeds, b.deps.Gen)
 	if err != nil {
 		_ = followupEphemeral(s, i, err.Error())
 		return
@@ -369,33 +369,7 @@ func (b *Bot) cmdAutopost(s *discordgo.Session, i *discordgo.InteractionCreate) 
 	}
 }
 
-// generateOneDraft refreshes sources, picks the next unused article, asks the
-// generator for text, stores the draft and marks the article used.
-func generateOneDraft(ctx context.Context, st *store.Store, f *feeds.Service, gen generate.Generator) (int64, error) {
-	if _, err := f.Refresh(ctx); err != nil {
-		return 0, fmt.Errorf("refresh sources: %w", err)
-	}
-	art, err := st.NextUnusedArticle(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("no fresh articles left. Add sources with /source-add")
-	}
-	if err != nil {
-		return 0, fmt.Errorf("pick article: %w", err)
-	}
-	text, err := gen.Generate(ctx, generateInput(art))
-	if err != nil {
-		return 0, fmt.Errorf("generate draft: %w", err)
-	}
-	d, err := st.CreateDraft(ctx, art.ID, text)
-	if err != nil {
-		return 0, fmt.Errorf("store draft: %w", err)
-	}
-	if err := st.MarkArticleUsed(ctx, art.ID); err != nil {
-		return 0, fmt.Errorf("mark article used: %w", err)
-	}
-	return d.ID, nil
-}
-
+// generateInput shapes an article for the generator.
 func generateInput(art store.Article) generate.Input {
 	summary := art.Summary
 	if summary == "" {
