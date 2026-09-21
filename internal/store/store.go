@@ -394,6 +394,21 @@ func (s *Store) MarkArticleUsed(ctx context.Context, id int64) error {
 	return nil
 }
 
+// GetArticle returns one article by id.
+func (s *Store) GetArticle(ctx context.Context, id int64) (Article, error) {
+	var a Article
+	var used int
+	err := s.db.QueryRowContext(ctx, `SELECT id, source_id, url, title, summary, body,
+		published_at, used, created_at FROM articles WHERE id = ?`, id).Scan(
+		&a.ID, &a.SourceID, &a.URL, &a.Title, &a.Summary, &a.Body,
+		&a.PublishedAt, &used, &a.CreatedAt)
+	if err != nil {
+		return Article{}, fmt.Errorf("get article %d: %w", id, err)
+	}
+	a.Used = used != 0
+	return a, nil
+}
+
 // Draft is a generated post moving through review toward LinkedIn.
 type Draft struct {
 	ID               int64
@@ -442,6 +457,18 @@ func (s *Store) UpdateDraftText(ctx context.Context, id int64, text string) erro
 		text, now(), id)
 	if err != nil {
 		return fmt.Errorf("update draft %d text: %w", id, err)
+	}
+	return nil
+}
+
+// UpdateDraftArticle re-points a draft at a new article with fresh text,
+// used by Regenerate to draw from another source item.
+func (s *Store) UpdateDraftArticle(ctx context.Context, id, articleID int64, text string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE drafts SET article_id = ?, text = ?,
+		status = ?, error = ?, updated_at = ? WHERE id = ?`,
+		articleID, text, DraftPending, "", now(), id)
+	if err != nil {
+		return fmt.Errorf("update draft %d article: %w", id, err)
 	}
 	return nil
 }
