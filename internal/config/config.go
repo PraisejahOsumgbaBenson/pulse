@@ -47,9 +47,9 @@ type Config struct {
 // Load reads the environment, applies defaults, and validates required values.
 func Load() (Config, error) {
 	cfg := Config{
-		DiscordToken:    os.Getenv("DISCORD_TOKEN"),
-		DiscordOwnerID:  os.Getenv("DISCORD_OWNER_ID"),
-		DevGuildID:      os.Getenv("DEV_GUILD_ID"),
+		DiscordToken:         os.Getenv("DISCORD_TOKEN"),
+		DiscordOwnerID:       os.Getenv("DISCORD_OWNER_ID"),
+		DevGuildID:           os.Getenv("DEV_GUILD_ID"),
 		LinkedInClientID:     os.Getenv("LINKEDIN_CLIENT_ID"),
 		LinkedInClientSecret: os.Getenv("LINKEDIN_CLIENT_SECRET"),
 		LinkedInRedirectURI:  os.Getenv("LINKEDIN_REDIRECT_URI"),

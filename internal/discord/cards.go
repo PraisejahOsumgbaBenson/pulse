@@ -15,11 +15,11 @@ import (
 
 // Card actions carried in button and modal custom IDs.
 const (
-	actionApprove = "approve"
-	actionEdit    = "edit"
-	actionRegen   = "regen"
-	actionSkip    = "skip"
-	actionSnooze  = "snooze"
+	actionApprove   = "approve"
+	actionEdit      = "edit"
+	actionRegen     = "regen"
+	actionSkip      = "skip"
+	actionSnooze    = "snooze"
 	actionEditModal = "editmodal"
 )
 

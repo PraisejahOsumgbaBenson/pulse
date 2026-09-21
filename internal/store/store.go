@@ -524,13 +524,13 @@ func (s *Store) ListDrafts(ctx context.Context, status string, limit int) ([]Dra
 
 // Schedule is one weekly reminder slot.
 type Schedule struct {
-	ID           int64
-	Days         string // CSV of time.Weekday numbers, e.g. "1,3,5"
-	Hour         int
-	Minute       int
-	Autopost     bool
-	Timezone     string
-	Enabled      bool
+	ID            int64
+	Days          string // CSV of time.Weekday numbers, e.g. "1,3,5"
+	Hour          int
+	Minute        int
+	Autopost      bool
+	Timezone      string
+	Enabled       bool
 	LastFiredSlot string
 }
 

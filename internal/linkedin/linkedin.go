@@ -50,8 +50,8 @@ func (e *APIError) Error() string {
 
 // Client talks to LinkedIn's OAuth and Posts APIs.
 type Client struct {
-	oauth      *oauth2.Config
-	http       *http.Client
+	oauth       *oauth2.Config
+	http        *http.Client
 	userInfoURL string
 	postsURL    string
 	version     string
