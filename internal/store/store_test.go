@@ -115,14 +115,17 @@ func TestSourcesAndArticles(t *testing.T) {
 
 	a1 := store.Article{SourceID: src.ID, URL: "https://example.com/a1", Title: "A1", Summary: "first"}
 	a2 := store.Article{SourceID: src.ID, URL: "https://example.com/a2", Title: "A2", Summary: "second"}
-	if err := st.AddArticle(ctx, a1); err != nil {
+	if _, err := st.AddArticle(ctx, a1); err != nil {
 		t.Fatalf("AddArticle() returned error: %v", err)
 	}
-	if err := st.AddArticle(ctx, a1); err != nil {
-		t.Fatalf("AddArticle() duplicate returned error: %v", err)
+	if inserted, err := st.AddArticle(ctx, a1); err != nil || inserted {
+		t.Fatalf("AddArticle() duplicate = inserted %v, %v, want false nil", inserted, err)
 	}
-	if err := st.AddArticle(ctx, a2); err != nil {
+	if _, err := st.AddArticle(ctx, a2); err != nil {
 		t.Fatalf("AddArticle() returned error: %v", err)
+	}
+	if n, err := st.CountUnusedArticles(ctx); err != nil || n != 2 {
+		t.Fatalf("CountUnusedArticles() = %d, %v, want 2 nil", n, err)
 	}
 
 	next, err := st.NextUnusedArticle(ctx)
@@ -154,7 +157,9 @@ func TestSourcesAndArticles(t *testing.T) {
 func TestDraftLifecycle(t *testing.T) {
 	st, ctx := openTestStore(t)
 	src, _ := st.AddSource(ctx, store.SourceRSS, "https://example.com/feed", "Example")
-	st.AddArticle(ctx, store.Article{SourceID: src.ID, URL: "https://example.com/a", Title: "A"})
+	if _, err := st.AddArticle(ctx, store.Article{SourceID: src.ID, URL: "https://example.com/a", Title: "A"}); err != nil {
+		t.Fatalf("AddArticle() returned error: %v", err)
+	}
 
 	art, err := st.NextUnusedArticle(ctx)
 	if err != nil {
@@ -239,7 +244,9 @@ func TestScheduleReplaceAndFire(t *testing.T) {
 func TestSnoozeQueue(t *testing.T) {
 	st, ctx := openTestStore(t)
 	src, _ := st.AddSource(ctx, store.SourceRSS, "https://example.com/feed", "Example")
-	st.AddArticle(ctx, store.Article{SourceID: src.ID, URL: "https://example.com/a", Title: "A"})
+	if _, err := st.AddArticle(ctx, store.Article{SourceID: src.ID, URL: "https://example.com/a", Title: "A"}); err != nil {
+		t.Fatalf("AddArticle() returned error: %v", err)
+	}
 	art, _ := st.NextUnusedArticle(ctx)
 	d, _ := st.CreateDraft(ctx, art.ID, "text")
 

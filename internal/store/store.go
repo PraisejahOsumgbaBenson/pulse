@@ -342,17 +342,31 @@ type Article struct {
 	CreatedAt   int64
 }
 
-// AddArticle inserts an article, silently skipping duplicates by URL.
-func (s *Store) AddArticle(ctx context.Context, a Article) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO articles
+// AddArticle inserts an article, reporting whether it was new.
+// Duplicates by URL are silently skipped.
+func (s *Store) AddArticle(ctx context.Context, a Article) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO articles
 		(source_id, url, title, summary, body, published_at, used, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, 0, ?)
 		ON CONFLICT(url) DO NOTHING`,
 		a.SourceID, a.URL, a.Title, a.Summary, a.Body, a.PublishedAt, now())
 	if err != nil {
-		return fmt.Errorf("add article %s: %w", a.URL, err)
+		return false, fmt.Errorf("add article %s: %w", a.URL, err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("add article %s rows: %w", a.URL, err)
+	}
+	return n > 0, nil
+}
+
+// CountUnusedArticles returns how many articles await a draft.
+func (s *Store) CountUnusedArticles(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM articles WHERE used = 0`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count unused articles: %w", err)
+	}
+	return n, nil
 }
 
 // NextUnusedArticle returns the oldest article not yet turned into a draft.
