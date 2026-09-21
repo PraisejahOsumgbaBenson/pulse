@@ -1,0 +1,23 @@
+# Example Fly.io deploy. Copy to fly.toml at the repo root, set the app name,
+# then: fly volumes create pulse_data -s 1 && fly secrets set ... && fly deploy
+app = "pulse-bot"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8081
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[mounts]]
+  source = "pulse_data"
+  destination = "/data"
+
+[env]
+  DB_PATH = "/data/pulse.db"
+  OAUTH_ADDR = ":8081"
+  TIMEZONE = "UTC"
