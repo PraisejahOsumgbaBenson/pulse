@@ -65,6 +65,27 @@ func New(clientID, clientSecret, redirectURI, version string, logger *slog.Logge
 		defaultUserInfoURL, defaultPostsURL, logger)
 }
 
+// Endpoints overrides the LinkedIn URLs, mainly so tests can point at local
+// servers. Production code should use New.
+type Endpoints struct {
+	AuthURL     string
+	TokenURL    string
+	UserInfoURL string
+	PostsURL    string
+}
+
+// NewWithEndpoints builds a Client with custom endpoints.
+func NewWithEndpoints(clientID, clientSecret, redirectURI, version string, ep Endpoints, logger *slog.Logger) *Client {
+	c := newClient(clientID, clientSecret, redirectURI, version, ep.UserInfoURL, ep.PostsURL, logger)
+	if ep.AuthURL != "" {
+		c.oauth.Endpoint.AuthURL = ep.AuthURL
+	}
+	if ep.TokenURL != "" {
+		c.oauth.Endpoint.TokenURL = ep.TokenURL
+	}
+	return c
+}
+
 func newClient(clientID, clientSecret, redirectURI, version, userInfoURL, postsURL string, logger *slog.Logger) *Client {
 	if logger == nil {
 		logger = slog.Default()
