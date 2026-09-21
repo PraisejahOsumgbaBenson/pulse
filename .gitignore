@@ -1,0 +1,33 @@
+# Binaries and build output
+pulse
+pulse.exe
+/bin/
+/dist/
+
+# Go test and coverage artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Local environment and secrets (never commit real keys)
+.env
+.env.local
+*.env
+
+# SQLite databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Fly.io and deploy secrets
+fly.toml.local
