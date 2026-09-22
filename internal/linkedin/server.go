@@ -12,11 +12,11 @@ import (
 
 // ConnectResult carries a finished LinkedIn authorization back to the bot.
 type ConnectResult struct {
-	DiscordUserID string
-	PersonID      string
-	PersonName    string
-	Scope         string
-	ExpiresAt     time.Time
+	TelegramUserID int64
+	PersonID       string
+	PersonName     string
+	Scope          string
+	ExpiresAt      time.Time
 }
 
 // CallbackServer finishes the OAuth dance LinkedIn redirects back to.
@@ -29,7 +29,7 @@ type CallbackServer struct {
 }
 
 // NewCallbackServer builds the tiny HTTP server. onConnected is invoked after
-// the token is stored so the bot can confirm the link over Discord.
+// the token is stored so the bot can confirm the link over Telegram.
 func NewCallbackServer(st *store.Store, client *Client, onConnected func(context.Context, ConnectResult), logger *slog.Logger) *CallbackServer {
 	if logger == nil {
 		logger = slog.Default()
@@ -57,32 +57,32 @@ func (s *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	if oauthErr := q.Get("error"); oauthErr != "" {
 		desc := q.Get("error_description")
 		s.logger.Warn("linkedin authorization denied", "error", oauthErr, "desc", desc)
-		writePage(w, "Connection failed", "LinkedIn refused the authorization ("+oauthErr+"). Run /link in Discord to try again.")
+		writePage(w, "Connection failed", "LinkedIn refused the authorization ("+oauthErr+"). Send /link in Telegram to try again.")
 		return
 	}
 	code, state := q.Get("code"), q.Get("state")
 	if code == "" || state == "" {
-		writePage(w, "Connection failed", "The callback is missing its code or state. Run /link in Discord to try again.")
+		writePage(w, "Connection failed", "The callback is missing its code or state. Send /link in Telegram to try again.")
 		return
 	}
 
 	pending, err := s.store.ConsumeOAuthState(ctx, state)
 	if err != nil {
 		s.logger.Warn("unknown oauth state", "err", err)
-		writePage(w, "Connection failed", "This link already expired or was used. Run /link in Discord to get a fresh one.")
+		writePage(w, "Connection failed", "This link already expired or was used. Send /link in Telegram to get a fresh one.")
 		return
 	}
 
 	tok, err := s.client.Exchange(ctx, code, pending.Verifier)
 	if err != nil {
 		s.logger.Error("exchange authorization code", "err", err)
-		writePage(w, "Connection failed", "LinkedIn would not exchange the code. Run /link in Discord to try again.")
+		writePage(w, "Connection failed", "LinkedIn would not exchange the code. Send /link in Telegram to try again.")
 		return
 	}
 	prof, err := s.client.Me(ctx, tok.AccessToken)
 	if err != nil {
 		s.logger.Error("read linkedin profile", "err", err)
-		writePage(w, "Connection failed", "Connected, but LinkedIn would not share your profile. Run /link in Discord to try again.")
+		writePage(w, "Connection failed", "Connected, but LinkedIn would not share your profile. Send /link in Telegram to try again.")
 		return
 	}
 
@@ -95,7 +95,7 @@ func (s *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 		PersonName:   prof.Name,
 	}); err != nil {
 		s.logger.Error("store linkedin token", "err", err)
-		writePage(w, "Connection failed", "Connected, but Pulse could not save the token. Run /link in Discord to try again.")
+		writePage(w, "Connection failed", "Connected, but Pulse could not save the token. Send /link in Telegram to try again.")
 		return
 	}
 	_ = s.store.PruneOAuthStates(ctx, time.Hour)
@@ -103,18 +103,18 @@ func (s *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	s.logger.Info("linkedin connected", "user", prof.Name, "person", prof.PersonID)
 	if s.onConnected != nil {
 		s.onConnected(ctx, ConnectResult{
-			DiscordUserID: pending.DiscordUserID,
-			PersonID:      prof.PersonID,
-			PersonName:    prof.Name,
-			Scope:         tok.Scope,
-			ExpiresAt:     tok.ExpiresAt,
+			TelegramUserID: pending.TelegramUserID,
+			PersonID:       prof.PersonID,
+			PersonName:     prof.Name,
+			Scope:          tok.Scope,
+			ExpiresAt:      tok.ExpiresAt,
 		})
 	}
 	name := prof.Name
 	if name == "" {
 		name = "your LinkedIn profile"
 	}
-	writePage(w, "LinkedIn connected", "Pulse is now linked to "+name+". You can close this tab and return to Discord.")
+	writePage(w, "LinkedIn connected", "Pulse is now linked to "+name+". You can close this tab and return to Telegram.")
 }
 
 func writePage(w http.ResponseWriter, title, message string) {

@@ -79,7 +79,7 @@ func TestLinkedInTokenRoundTrip(t *testing.T) {
 
 func TestOAuthStateConsumeOnce(t *testing.T) {
 	st, ctx := openTestStore(t)
-	want := store.OAuthState{State: "s1", DiscordUserID: "u1", Verifier: "v1"}
+	want := store.OAuthState{State: "s1", TelegramUserID: 111, Verifier: "v1"}
 	if err := st.SaveOAuthState(ctx, want); err != nil {
 		t.Fatalf("SaveOAuthState() returned error: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestOAuthStateConsumeOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConsumeOAuthState() returned error: %v", err)
 	}
-	if got.DiscordUserID != "u1" || got.Verifier != "v1" {
+	if got.TelegramUserID != 111 || got.Verifier != "v1" {
 		t.Errorf("ConsumeOAuthState() = %+v, want stored values", got)
 	}
 	if _, err := st.ConsumeOAuthState(ctx, "s1"); !errors.Is(err, sql.ErrNoRows) {
@@ -175,7 +175,7 @@ func TestDraftLifecycle(t *testing.T) {
 	if err := st.UpdateDraftText(ctx, d.ID, "edited"); err != nil {
 		t.Fatalf("UpdateDraftText() returned error: %v", err)
 	}
-	if err := st.SetDraftMessage(ctx, d.ID, "chan1", "msg1"); err != nil {
+	if err := st.SetDraftMessage(ctx, d.ID, 222, 333); err != nil {
 		t.Fatalf("SetDraftMessage() returned error: %v", err)
 	}
 	if err := st.UpdateDraftStatus(ctx, d.ID, store.DraftPosted, "urn:li:share:1", ""); err != nil {
@@ -188,8 +188,8 @@ func TestDraftLifecycle(t *testing.T) {
 	if got.Text != "edited" || got.Status != store.DraftPosted || got.LinkedInURN != "urn:li:share:1" {
 		t.Errorf("GetDraft() = %+v, want edited posted urn", got)
 	}
-	if got.DiscordChannelID != "chan1" || got.DiscordMessageID != "msg1" {
-		t.Errorf("GetDraft() message refs = %q %q, want chan1 msg1", got.DiscordChannelID, got.DiscordMessageID)
+	if got.TelegramChatID != 222 || got.TelegramMessageID != 333 {
+		t.Errorf("GetDraft() message refs = %d %d, want 222 333", got.TelegramChatID, got.TelegramMessageID)
 	}
 	posted, err := st.ListDrafts(ctx, store.DraftPosted, 10)
 	if err != nil || len(posted) != 1 {
@@ -279,5 +279,62 @@ func TestSnoozeQueue(t *testing.T) {
 	rest, _ := st.DueSnoozes(ctx, time.Now().Add(2*time.Hour))
 	if len(rest) != 0 {
 		t.Fatalf("DueSnoozes() after clear = %v, want 0 rows", rest)
+	}
+}
+
+func TestAddArticleIDReturnsID(t *testing.T) {
+	st, ctx := openTestStore(t)
+	src, _ := st.AddSource(ctx, store.SourceTopic, "telegram:topics", "Your topics")
+	if src.Kind != store.SourceTopic {
+		t.Fatalf("AddSource() kind = %q, want topic", src.Kind)
+	}
+	id, isNew, err := st.AddArticleID(ctx, store.Article{SourceID: src.ID, URL: "topic:1", Title: "T1", Summary: "thought one"})
+	if err != nil || !isNew || id <= 0 {
+		t.Fatalf("AddArticleID() = %d, %v, %v; want id, true, nil", id, isNew, err)
+	}
+	got, err := st.GetArticle(ctx, id)
+	if err != nil || got.Title != "T1" {
+		t.Fatalf("GetArticle() = %+v, %v; want T1", got, err)
+	}
+	same, isNew, err := st.AddArticleID(ctx, store.Article{SourceID: src.ID, URL: "topic:1", Title: "T1x", Summary: "dup"})
+	if err != nil || isNew || same != id {
+		t.Fatalf("AddArticleID() duplicate = %d, %v, %v; want %d, false, nil", same, isNew, err, id)
+	}
+}
+
+func TestListUnusedArticlesNewestFirst(t *testing.T) {
+	st, ctx := openTestStore(t)
+	src, _ := st.AddSource(ctx, store.SourceRSS, "https://example.com/feed", "Example")
+	if _, err := st.AddArticle(ctx, store.Article{SourceID: src.ID, URL: "https://example.com/old", Title: "Old", PublishedAt: 100}); err != nil {
+		t.Fatalf("AddArticle() returned error: %v", err)
+	}
+	if _, err := st.AddArticle(ctx, store.Article{SourceID: src.ID, URL: "https://example.com/new", Title: "New", PublishedAt: 200}); err != nil {
+		t.Fatalf("AddArticle() returned error: %v", err)
+	}
+	arts, err := st.ListUnusedArticles(ctx, 5)
+	if err != nil || len(arts) != 2 || arts[0].Title != "New" || arts[1].Title != "Old" {
+		t.Fatalf("ListUnusedArticles() = %+v, %v; want New, Old", arts, err)
+	}
+	if err := st.MarkArticleUsed(ctx, arts[0].ID); err != nil {
+		t.Fatalf("MarkArticleUsed() returned error: %v", err)
+	}
+	rest, err := st.ListUnusedArticles(ctx, 5)
+	if err != nil || len(rest) != 1 || rest[0].Title != "Old" {
+		t.Fatalf("ListUnusedArticles() after use = %+v, %v; want Old only", rest, err)
+	}
+}
+
+func TestGetSource(t *testing.T) {
+	st, ctx := openTestStore(t)
+	src, _ := st.AddSource(ctx, store.SourceTopic, "telegram:topics", "Your topics")
+	got, err := st.GetSource(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("GetSource() returned error: %v", err)
+	}
+	if got.Kind != store.SourceTopic || got.URL != "telegram:topics" {
+		t.Errorf("GetSource() = %+v, want topic telegram:topics", got)
+	}
+	if _, err := st.GetSource(ctx, 9999); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("GetSource(missing) = %v, want sql.ErrNoRows", err)
 	}
 }

@@ -22,8 +22,9 @@ const (
 
 // Source kinds.
 const (
-	SourceRSS  = "rss"
-	SourceLink = "link"
+	SourceRSS   = "rss"
+	SourceLink  = "link"
+	SourceTopic = "topic"
 )
 
 const schema = `
@@ -43,7 +44,7 @@ CREATE TABLE IF NOT EXISTS linkedin_token (
 );
 CREATE TABLE IF NOT EXISTS oauth_states (
 	state TEXT PRIMARY KEY,
-	discord_user_id TEXT NOT NULL,
+	telegram_user_id INTEGER NOT NULL,
 	verifier TEXT NOT NULL,
 	created_at INTEGER NOT NULL
 );
@@ -72,8 +73,8 @@ CREATE TABLE IF NOT EXISTS drafts (
 	status TEXT NOT NULL DEFAULT 'pending',
 	linkedin_urn TEXT NOT NULL DEFAULT '',
 	error TEXT NOT NULL DEFAULT '',
-	discord_channel_id TEXT NOT NULL DEFAULT '',
-	discord_message_id TEXT NOT NULL DEFAULT '',
+	telegram_chat_id INTEGER NOT NULL DEFAULT 0,
+	telegram_message_id INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 );
@@ -215,18 +216,18 @@ func (s *Store) ClearLinkedInToken(ctx context.Context) error {
 	return nil
 }
 
-// OAuthState tracks an in-flight LinkedIn authorization for one Discord user.
+// OAuthState tracks an in-flight LinkedIn authorization for one Telegram user.
 type OAuthState struct {
-	State         string
-	DiscordUserID string
-	Verifier      string
-	CreatedAt     int64
+	State          string
+	TelegramUserID int64
+	Verifier       string
+	CreatedAt      int64
 }
 
 // SaveOAuthState records a fresh authorization request.
 func (s *Store) SaveOAuthState(ctx context.Context, st OAuthState) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO oauth_states(state, discord_user_id, verifier, created_at)
-		VALUES (?, ?, ?, ?)`, st.State, st.DiscordUserID, st.Verifier, now())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO oauth_states(state, telegram_user_id, verifier, created_at)
+		VALUES (?, ?, ?, ?)`, st.State, st.TelegramUserID, st.Verifier, now())
 	if err != nil {
 		return fmt.Errorf("save oauth state: %w", err)
 	}
@@ -236,9 +237,9 @@ func (s *Store) SaveOAuthState(ctx context.Context, st OAuthState) error {
 // ConsumeOAuthState returns and deletes a pending state, or sql.ErrNoRows.
 func (s *Store) ConsumeOAuthState(ctx context.Context, state string) (OAuthState, error) {
 	var st OAuthState
-	err := s.db.QueryRowContext(ctx, `SELECT state, discord_user_id, verifier, created_at
+	err := s.db.QueryRowContext(ctx, `SELECT state, telegram_user_id, verifier, created_at
 		FROM oauth_states WHERE state = ?`, state).Scan(
-		&st.State, &st.DiscordUserID, &st.Verifier, &st.CreatedAt)
+		&st.State, &st.TelegramUserID, &st.Verifier, &st.CreatedAt)
 	if err != nil {
 		return OAuthState{}, fmt.Errorf("consume oauth state: %w", err)
 	}
@@ -281,6 +282,18 @@ func (s *Store) AddSource(ctx context.Context, kind, url, title string) (Source,
 		&src.ID, &src.Kind, &src.URL, &src.Title, &src.LastFetchedAt)
 	if err != nil {
 		return Source{}, fmt.Errorf("read back source %s: %w", url, err)
+	}
+	return src, nil
+}
+
+// GetSource returns one source by id, or sql.ErrNoRows.
+func (s *Store) GetSource(ctx context.Context, id int64) (Source, error) {
+	var src Source
+	err := s.db.QueryRowContext(ctx, `SELECT id, kind, url, title, last_fetched_at
+		FROM sources WHERE id = ?`, id).Scan(
+		&src.ID, &src.Kind, &src.URL, &src.Title, &src.LastFetchedAt)
+	if err != nil {
+		return Source{}, fmt.Errorf("get source %d: %w", id, err)
 	}
 	return src, nil
 }
@@ -360,6 +373,33 @@ func (s *Store) AddArticle(ctx context.Context, a Article) (bool, error) {
 	return n > 0, nil
 }
 
+// AddArticleID inserts an article and returns its id. A duplicate URL
+// returns the existing id with isNew false instead of failing.
+func (s *Store) AddArticleID(ctx context.Context, a Article) (id int64, isNew bool, err error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO articles
+		(source_id, url, title, summary, body, published_at, used, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+		ON CONFLICT(url) DO NOTHING`,
+		a.SourceID, a.URL, a.Title, a.Summary, a.Body, a.PublishedAt, now())
+	if err != nil {
+		return 0, false, fmt.Errorf("add article %s: %w", a.URL, err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return 0, false, fmt.Errorf("add article %s rows: %w", a.URL, err)
+	} else if n > 0 {
+		id, err := res.LastInsertId()
+		if err != nil {
+			return 0, false, fmt.Errorf("add article %s id: %w", a.URL, err)
+		}
+		return id, true, nil
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM articles WHERE url = ?`, a.URL).Scan(&id)
+	if err != nil {
+		return 0, false, fmt.Errorf("read back article %s: %w", a.URL, err)
+	}
+	return id, false, nil
+}
+
 // CountUnusedArticles returns how many articles await a draft.
 func (s *Store) CountUnusedArticles(ctx context.Context) (int, error) {
 	var n int
@@ -383,6 +423,30 @@ func (s *Store) NextUnusedArticle(ctx context.Context) (Article, error) {
 	}
 	a.Used = used != 0
 	return a, nil
+}
+
+// ListUnusedArticles returns up to limit fresh articles, newest first,
+// for the trending view.
+func (s *Store) ListUnusedArticles(ctx context.Context, limit int) ([]Article, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, source_id, url, title, summary, body,
+		published_at, used, created_at FROM articles WHERE used = 0
+		ORDER BY published_at DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list unused articles: %w", err)
+	}
+	defer rows.Close()
+	var out []Article
+	for rows.Next() {
+		var a Article
+		var used int
+		if err := rows.Scan(&a.ID, &a.SourceID, &a.URL, &a.Title, &a.Summary, &a.Body,
+			&a.PublishedAt, &used, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan article: %w", err)
+		}
+		a.Used = used != 0
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // MarkArticleUsed flags an article as consumed by a draft.
@@ -411,16 +475,16 @@ func (s *Store) GetArticle(ctx context.Context, id int64) (Article, error) {
 
 // Draft is a generated post moving through review toward LinkedIn.
 type Draft struct {
-	ID               int64
-	ArticleID        int64
-	Text             string
-	Status           string
-	LinkedInURN      string
-	Error            string
-	DiscordChannelID string
-	DiscordMessageID string
-	CreatedAt        int64
-	UpdatedAt        int64
+	ID                int64
+	ArticleID         int64
+	Text              string
+	Status            string
+	LinkedInURN       string
+	Error             string
+	TelegramChatID    int64
+	TelegramMessageID int64
+	CreatedAt         int64
+	UpdatedAt         int64
 }
 
 // CreateDraft stores a fresh pending draft.
@@ -441,10 +505,10 @@ func (s *Store) CreateDraft(ctx context.Context, articleID int64, text string) (
 func (s *Store) GetDraft(ctx context.Context, id int64) (Draft, error) {
 	var d Draft
 	err := s.db.QueryRowContext(ctx, `SELECT id, article_id, text, status, linkedin_urn,
-		error, discord_channel_id, discord_message_id, created_at, updated_at
+		error, telegram_chat_id, telegram_message_id, created_at, updated_at
 		FROM drafts WHERE id = ?`, id).Scan(
 		&d.ID, &d.ArticleID, &d.Text, &d.Status, &d.LinkedInURN,
-		&d.Error, &d.DiscordChannelID, &d.DiscordMessageID, &d.CreatedAt, &d.UpdatedAt)
+		&d.Error, &d.TelegramChatID, &d.TelegramMessageID, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return Draft{}, fmt.Errorf("get draft %d: %w", id, err)
 	}
@@ -483,10 +547,10 @@ func (s *Store) UpdateDraftStatus(ctx context.Context, id int64, status, urn, po
 	return nil
 }
 
-// SetDraftMessage records where a draft was announced on Discord.
-func (s *Store) SetDraftMessage(ctx context.Context, id int64, channelID, messageID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE drafts SET discord_channel_id = ?,
-		discord_message_id = ?, updated_at = ? WHERE id = ?`, channelID, messageID, now(), id)
+// SetDraftMessage records where a draft was announced over Telegram.
+func (s *Store) SetDraftMessage(ctx context.Context, id, chatID, messageID int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE drafts SET telegram_chat_id = ?,
+		telegram_message_id = ?, updated_at = ? WHERE id = ?`, chatID, messageID, now(), id)
 	if err != nil {
 		return fmt.Errorf("set draft %d message: %w", id, err)
 	}
@@ -496,7 +560,7 @@ func (s *Store) SetDraftMessage(ctx context.Context, id int64, channelID, messag
 // ListDrafts returns recent drafts, newest first, optionally filtered by status.
 func (s *Store) ListDrafts(ctx context.Context, status string, limit int) ([]Draft, error) {
 	query := `SELECT id, article_id, text, status, linkedin_urn, error,
-		discord_channel_id, discord_message_id, created_at, updated_at
+		telegram_chat_id, telegram_message_id, created_at, updated_at
 		FROM drafts`
 	var args []any
 	if status != "" {
@@ -514,7 +578,7 @@ func (s *Store) ListDrafts(ctx context.Context, status string, limit int) ([]Dra
 	for rows.Next() {
 		var d Draft
 		if err := rows.Scan(&d.ID, &d.ArticleID, &d.Text, &d.Status, &d.LinkedInURN,
-			&d.Error, &d.DiscordChannelID, &d.DiscordMessageID, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			&d.Error, &d.TelegramChatID, &d.TelegramMessageID, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan draft: %w", err)
 		}
 		out = append(out, d)

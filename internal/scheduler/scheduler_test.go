@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,17 +15,17 @@ import (
 )
 
 type fakeNotifier struct {
-	owner string
+	owner int64
 	cards []int64
 	texts []string
 }
 
-func (f *fakeNotifier) Owner(context.Context) (string, error) { return f.owner, nil }
-func (f *fakeNotifier) SendDraftCard(_ context.Context, _ string, draftID int64) error {
+func (f *fakeNotifier) Owner(context.Context) (int64, error) { return f.owner, nil }
+func (f *fakeNotifier) SendDraftCard(_ context.Context, _ int64, draftID int64) error {
 	f.cards = append(f.cards, draftID)
 	return nil
 }
-func (f *fakeNotifier) SendText(_ context.Context, _ string, text string) error {
+func (f *fakeNotifier) SendText(_ context.Context, _ int64, text string) error {
 	f.texts = append(f.texts, text)
 	return nil
 }
@@ -39,7 +40,7 @@ func (f *fakePublisher) Publish(_ context.Context, draftID int64) (string, error
 	return f.urn, nil
 }
 
-func setup(t *testing.T, owner string) (*store.Store, *feeds.Service, context.Context, *fakeNotifier, *fakePublisher, *scheduler.Service) {
+func setup(t *testing.T, owner int64) (*store.Store, *feeds.Service, context.Context, *fakeNotifier, *fakePublisher, *scheduler.Service) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -70,7 +71,7 @@ func seedArticle(t *testing.T, st *store.Store, ctx context.Context, url, title 
 var slotTime = time.Date(2026, 9, 21, 9, 0, 0, 0, time.UTC)
 
 func TestTickFiresScheduleOnce(t *testing.T) {
-	st, _, ctx, n, p, svc := setup(t, "u1")
+	st, _, ctx, n, p, svc := setup(t, 111)
 	seedArticle(t, st, ctx, "https://example.com/a", "Article A")
 	if _, err := st.ReplaceSchedule(ctx, "1,3,5", 9, 0, false, "UTC"); err != nil {
 		t.Fatalf("ReplaceSchedule() returned error: %v", err)
@@ -104,7 +105,7 @@ func TestTickFiresScheduleOnce(t *testing.T) {
 }
 
 func TestTickAutopostsWhenEnabled(t *testing.T) {
-	st, _, ctx, n, p, svc := setup(t, "u1")
+	st, _, ctx, n, p, svc := setup(t, 111)
 	seedArticle(t, st, ctx, "https://example.com/a", "Article A")
 	if _, err := st.ReplaceSchedule(ctx, "1", 9, 0, true, "UTC"); err != nil {
 		t.Fatalf("ReplaceSchedule() returned error: %v", err)
@@ -119,7 +120,7 @@ func TestTickAutopostsWhenEnabled(t *testing.T) {
 
 func TestTickWarnsWhenNoArticles(t *testing.T) {
 	// Fresh store, no sources at all: the cycle should say so over DM.
-	st, _, ctx, n, _, svc := setup(t, "u1")
+	st, _, ctx, n, _, svc := setup(t, 111)
 	if _, err := st.ReplaceSchedule(ctx, "1", 9, 0, false, "UTC"); err != nil {
 		t.Fatalf("ReplaceSchedule() returned error: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestTickWarnsWhenNoArticles(t *testing.T) {
 }
 
 func TestTickRefiresDueSnoozes(t *testing.T) {
-	st, _, ctx, n, _, svc := setup(t, "u1")
+	st, _, ctx, n, _, svc := setup(t, 111)
 	seedArticle(t, st, ctx, "https://example.com/a", "Article A")
 	art, _ := st.NextUnusedArticle(ctx)
 	d, _ := st.CreateDraft(ctx, art.ID, "snoozed text")
@@ -152,7 +153,7 @@ func TestTickRefiresDueSnoozes(t *testing.T) {
 }
 
 func TestTickWarnsAboutDyingTokenOnce(t *testing.T) {
-	st, _, ctx, n, _, svc := setup(t, "u1")
+	st, _, ctx, n, _, svc := setup(t, 111)
 	if err := st.SaveLinkedInToken(ctx, store.LinkedInToken{
 		AccessToken: "a", PersonID: "urn:li:person:1",
 		ExpiresAt: time.Now().Add(time.Hour).Unix(),
@@ -177,7 +178,7 @@ func TestTickWarnsAboutDyingTokenOnce(t *testing.T) {
 }
 
 func TestGenerateOneDraft(t *testing.T) {
-	st, f, ctx, _, _, _ := setup(t, "u1")
+	st, f, ctx, _, _, _ := setup(t, 111)
 	gen := generate.New("", "", "", "", slog.Default())
 	if _, err := scheduler.GenerateOneDraft(ctx, st, f, gen); err == nil {
 		t.Fatal("GenerateOneDraft(empty) = nil, want error")
@@ -196,5 +197,54 @@ func TestGenerateOneDraft(t *testing.T) {
 	}
 	if n, _ := st.CountUnusedArticles(ctx); n != 0 {
 		t.Errorf("CountUnusedArticles() = %d, want 0 after use", n)
+	}
+}
+
+func TestGenerateTopicDraft(t *testing.T) {
+	st, _, ctx, _, _, _ := setup(t, 111)
+	gen := generate.New("", "", "", "", slog.Default())
+	if _, err := scheduler.GenerateTopicDraft(ctx, st, gen, "   "); err == nil {
+		t.Fatal("GenerateTopicDraft(blank) = nil, want error")
+	}
+	id, err := scheduler.GenerateTopicDraft(ctx, st, gen, "my first week learning Go")
+	if err != nil {
+		t.Fatalf("GenerateTopicDraft() returned error: %v", err)
+	}
+	d, err := st.GetDraft(ctx, id)
+	if err != nil {
+		t.Fatalf("GetDraft() returned error: %v", err)
+	}
+	if d.Status != store.DraftPending || !strings.Contains(d.Text, "learning Go") {
+		t.Errorf("draft = %+v, want pending draft about the thought", d)
+	}
+	if n, _ := st.CountUnusedArticles(ctx); n != 0 {
+		t.Errorf("CountUnusedArticles() = %d, want 0 so topics never feed auto drafts", n)
+	}
+	if _, err := scheduler.GenerateTopicDraft(ctx, st, gen, "another thought here"); err != nil {
+		t.Fatalf("GenerateTopicDraft() second call returned error: %v", err)
+	}
+}
+
+func TestGenerateDraftFromArticle(t *testing.T) {
+	st, _, ctx, _, _, _ := setup(t, 111)
+	gen := generate.New("", "", "", "", slog.Default())
+	seedArticle(t, st, ctx, "https://example.com/pick", "Pick me")
+	arts, err := st.ListUnusedArticles(ctx, 5)
+	if err != nil || len(arts) != 1 {
+		t.Fatalf("ListUnusedArticles() = %v, %v; want 1", arts, err)
+	}
+	id, err := scheduler.GenerateDraftFromArticle(ctx, st, gen, arts[0].ID)
+	if err != nil {
+		t.Fatalf("GenerateDraftFromArticle() returned error: %v", err)
+	}
+	d, err := st.GetDraft(ctx, id)
+	if err != nil {
+		t.Fatalf("GetDraft() returned error: %v", err)
+	}
+	if d.Status != store.DraftPending || !strings.Contains(d.Text, "Pick me") {
+		t.Errorf("draft = %+v, want pending draft about the picked article", d)
+	}
+	if _, err := scheduler.GenerateDraftFromArticle(ctx, st, gen, arts[0].ID); err == nil {
+		t.Error("GenerateDraftFromArticle(used) = nil, want error")
 	}
 }

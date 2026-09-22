@@ -1,5 +1,5 @@
 // Package scheduler fires reminder slots: it refreshes sources, generates
-// drafts, announces them over Discord, auto-posts when enabled, re-fires
+// drafts, announces them over Telegram, auto-posts when enabled, re-fires
 // snoozes, and warns about dying LinkedIn tokens.
 package scheduler
 
@@ -18,11 +18,11 @@ import (
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/store"
 )
 
-// Notifier reaches the owner over Discord. The bot implements it.
+// Notifier reaches the owner over Telegram. The bot implements it.
 type Notifier interface {
-	Owner(ctx context.Context) (string, error)
-	SendDraftCard(ctx context.Context, userID string, draftID int64) error
-	SendText(ctx context.Context, userID, text string) error
+	Owner(ctx context.Context) (int64, error)
+	SendDraftCard(ctx context.Context, chatID int64, draftID int64) error
+	SendText(ctx context.Context, chatID int64, text string) error
 }
 
 // Publisher posts approved drafts. See internal/publisher.
@@ -131,7 +131,7 @@ func (s *Service) dueSnoozes(ctx context.Context, at time.Time) []store.Snooze {
 
 // runCycle produces one draft for a fired slot and announces it,
 // auto-posting first when the schedule asks for it.
-func (s *Service) runCycle(ctx context.Context, owner string, sc store.Schedule) {
+func (s *Service) runCycle(ctx context.Context, owner int64, sc store.Schedule) {
 	id, err := GenerateOneDraft(ctx, s.store, s.feeds, s.gen)
 	if err != nil {
 		s.logger.Warn("scheduled generation failed", "err", err)
@@ -149,7 +149,7 @@ func (s *Service) runCycle(ctx context.Context, owner string, sc store.Schedule)
 }
 
 // watchToken warns once about expiring tokens and daily about dead ones.
-func (s *Service) watchToken(ctx context.Context, owner string, at time.Time) {
+func (s *Service) watchToken(ctx context.Context, owner int64, at time.Time) {
 	tok, err := s.store.GetLinkedInToken(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return
@@ -186,7 +186,7 @@ func GenerateOneDraft(ctx context.Context, st *store.Store, f *feeds.Service, ge
 	}
 	art, err := st.NextUnusedArticle(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("no fresh articles left. Add sources with /source-add")
+		return 0, fmt.Errorf("no fresh articles left. Add sources with /source_add")
 	}
 	if err != nil {
 		return 0, fmt.Errorf("pick article: %w", err)
@@ -203,6 +203,84 @@ func GenerateOneDraft(ctx context.Context, st *store.Store, f *feeds.Service, ge
 		return 0, fmt.Errorf("mark article used: %w", err)
 	}
 	return d.ID, nil
+}
+
+// topicSourceURL is the stable pseudo-source topic thoughts file under.
+// Refresh only touches RSS sources, so it never fetches this.
+const topicSourceURL = "telegram:topics"
+
+// GenerateTopicDraft turns a free-text thought into a draft with no feed
+// involved. The thought is stored under a dedicated topic source and its
+// article is marked used at once, so topic drafts never leak into
+// scheduled picks.
+func GenerateTopicDraft(ctx context.Context, st *store.Store, gen generate.Generator, thought string) (int64, error) {
+	thought = strings.TrimSpace(thought)
+	if thought == "" {
+		return 0, fmt.Errorf("give a thought after /topic, e.g. /topic my first week learning Go")
+	}
+	if n := len([]rune(thought)); n > 2000 {
+		return 0, fmt.Errorf("that thought is %d characters, keep it under 2000", n)
+	}
+	src, err := st.AddSource(ctx, store.SourceTopic, topicSourceURL, "Your topics")
+	if err != nil {
+		return 0, fmt.Errorf("topic source: %w", err)
+	}
+	title := topicTitle(thought)
+	artID, _, err := st.AddArticleID(ctx, store.Article{
+		SourceID: src.ID,
+		URL:      fmt.Sprintf("topic:%d", time.Now().UnixNano()),
+		Title:    title,
+		Summary:  thought,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("store thought: %w", err)
+	}
+	text, err := gen.Generate(ctx, generate.Input{Title: title, Summary: thought})
+	if err != nil {
+		return 0, fmt.Errorf("generate draft: %w", err)
+	}
+	d, err := st.CreateDraft(ctx, artID, text)
+	if err != nil {
+		return 0, fmt.Errorf("store draft: %w", err)
+	}
+	if err := st.MarkArticleUsed(ctx, artID); err != nil {
+		return 0, fmt.Errorf("mark article used: %w", err)
+	}
+	return d.ID, nil
+}
+
+// GenerateDraftFromArticle drafts one specific article, e.g. a trending
+// pick, and marks it used.
+func GenerateDraftFromArticle(ctx context.Context, st *store.Store, gen generate.Generator, articleID int64) (int64, error) {
+	art, err := st.GetArticle(ctx, articleID)
+	if err != nil {
+		return 0, fmt.Errorf("pick article: %w", err)
+	}
+	if art.Used {
+		return 0, fmt.Errorf("that one is already used, pick another")
+	}
+	text, err := gen.Generate(ctx, generate.Input{Title: art.Title, Summary: firstNonEmpty(art.Summary, art.Body), URL: art.URL})
+	if err != nil {
+		return 0, fmt.Errorf("generate draft: %w", err)
+	}
+	d, err := st.CreateDraft(ctx, art.ID, text)
+	if err != nil {
+		return 0, fmt.Errorf("store draft: %w", err)
+	}
+	if err := st.MarkArticleUsed(ctx, art.ID); err != nil {
+		return 0, fmt.Errorf("mark article used: %w", err)
+	}
+	return d.ID, nil
+}
+
+// topicTitle squeezes a thought into a one-line title.
+func topicTitle(thought string) string {
+	line, _, _ := strings.Cut(thought, "\n")
+	title := strings.Join(strings.Fields(line), " ")
+	if r := []rune(title); len(r) > 80 {
+		return string(r[:79]) + "…"
+	}
+	return title
 }
 
 func firstNonEmpty(values ...string) string {

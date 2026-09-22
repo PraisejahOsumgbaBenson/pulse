@@ -95,24 +95,47 @@ func (g *OpenAICompat) Generate(ctx context.Context, in Input) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("encode chat request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("build chat request: %w", err)
+	// Overloaded free-tier models answer 429 or 5xx under spikes, so retry
+	// those a few times with backoff instead of failing the draft.
+	const maxAttempts = 3
+	for attempt := 1; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL+"/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return "", fmt.Errorf("build chat request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+g.apiKey)
+		resp, err := g.http.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("call chat completions: %w", err)
+		}
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if err != nil {
+			return "", fmt.Errorf("read chat response: %w", err)
+		}
+		if resp.StatusCode == http.StatusOK {
+			text, err := decodeChoices(raw)
+			if err != nil {
+				return "", err
+			}
+			g.logger.Info("draft generated", "generator", g.Name(), "chars", len(text))
+			return capRunes(text, maxDraftRunes), nil
+		}
+		retryable := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		if !retryable || attempt >= maxAttempts {
+			return "", fmt.Errorf("chat completions status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		}
+		g.logger.Warn("chat completions overloaded, retrying", "status", resp.StatusCode, "attempt", attempt)
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("chat completions status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		case <-time.After(time.Duration(1<<uint(attempt-1)) * time.Second):
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+g.apiKey)
-	resp, err := g.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("call chat completions: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", fmt.Errorf("read chat response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("chat completions status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
+}
+
+func decodeChoices(raw []byte) (string, error) {
 	var doc struct {
 		Choices []struct {
 			Message struct {
@@ -130,8 +153,7 @@ func (g *OpenAICompat) Generate(ctx context.Context, in Input) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("model returned empty draft")
 	}
-	g.logger.Info("draft generated", "generator", g.Name(), "chars", len(text))
-	return capRunes(text, maxDraftRunes), nil
+	return text, nil
 }
 
 // Fallback builds a readable post with no network and no key.
@@ -151,8 +173,11 @@ func (g *Fallback) Generate(_ context.Context, in Input) (string, error) {
 	if title == "" && summary == "" {
 		return "", fmt.Errorf("fallback needs a title or summary")
 	}
+	if url == "" {
+		return g.thoughtPost(title, summary), nil
+	}
 	var b strings.Builder
-	if title != "" {
+	if title != "" && !strings.HasPrefix(summary, title) {
 		b.WriteString(title)
 	}
 	body := firstSentences(summary, 2)
@@ -171,6 +196,29 @@ func (g *Fallback) Generate(_ context.Context, in Input) (string, error) {
 	text := capRunes(strings.TrimSpace(b.String()), maxDraftRunes)
 	g.logger.Info("draft generated", "generator", g.Name(), "chars", len(text))
 	return text, nil
+}
+
+// thoughtClosers ends plain-writer posts with a light question. The pick is
+// deterministic per text so the same thought always drafts the same way.
+var thoughtClosers = []string{
+	"What's your take?",
+	"Curious how others see this.",
+	"Would love to hear your experience.",
+}
+
+// thoughtPost shapes a /topic thought into a short post without inventing
+// anything beyond the thought itself: the thought, a closer, hashtags.
+func (g *Fallback) thoughtPost(title, summary string) string {
+	body := capRunes(strings.TrimSpace(summary), 1200)
+	var b strings.Builder
+	b.WriteString(body)
+	b.WriteString("\n\n" + thoughtClosers[len([]rune(body))%len(thoughtClosers)])
+	if tags := deriveTags(title + " " + summary); len(tags) > 0 {
+		b.WriteString("\n\n" + strings.Join(tags, " "))
+	}
+	text := capRunes(strings.TrimSpace(b.String()), maxDraftRunes)
+	g.logger.Info("draft generated", "generator", g.Name(), "chars", len(text))
+	return text
 }
 
 func capRunes(s string, max int) string {
