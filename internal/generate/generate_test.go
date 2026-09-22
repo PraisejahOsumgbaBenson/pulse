@@ -46,6 +46,40 @@ func TestFallbackBuildsReadablePost(t *testing.T) {
 	}
 }
 
+func TestFallbackSkipsTitleDuplicatingSummary(t *testing.T) {
+	g := generate.New("", "", "", "", slog.Default())
+	text, err := g.Generate(context.Background(), generate.Input{
+		Title:   "tech and astronomy",
+		Summary: "tech and astronomy",
+	})
+	if err != nil {
+		t.Fatalf("Generate() returned error: %v", err)
+	}
+	if n := strings.Count(text, "tech and astronomy"); n != 1 {
+		t.Errorf("Generate() repeats the thought %d times, want 1:\n%s", n, text)
+	}
+}
+
+func TestFallbackThoughtModeShapesPost(t *testing.T) {
+	g := generate.New("", "", "", "", slog.Default())
+	text, err := g.Generate(context.Background(), generate.Input{
+		Title:   "tech and astronomy",
+		Summary: "tech and astronomy",
+	})
+	if err != nil {
+		t.Fatalf("Generate() returned error: %v", err)
+	}
+	if n := strings.Count(text, "tech and astronomy"); n != 1 {
+		t.Errorf("Generate() repeats the thought %d times, want 1:\n%s", n, text)
+	}
+	if !strings.Contains(text, "?") {
+		t.Errorf("Generate() has no closing question:\n%s", text)
+	}
+	if !strings.Contains(text, "#") {
+		t.Errorf("Generate() has no hashtags:\n%s", text)
+	}
+}
+
 func TestFallbackNeedsSomethingToSay(t *testing.T) {
 	g := generate.New("", "", "", "", slog.Default())
 	if _, err := g.Generate(context.Background(), generate.Input{}); err == nil {
@@ -106,5 +140,50 @@ func TestOpenAICompatSurfacesServerErrors(t *testing.T) {
 	g2 := generate.New(empty.URL, "m", "k", "", slog.Default())
 	if _, err := g2.Generate(context.Background(), generate.Input{Title: "T"}); err == nil {
 		t.Error("Generate(no choices) = nil, want error")
+	}
+}
+
+func TestOpenAICompatRetriesOverload(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if hits < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"message":"overloaded"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"recovered draft"}}]}`))
+	}))
+	defer srv.Close()
+
+	g := generate.New(srv.URL, "m", "k", "", slog.Default())
+	text, err := g.Generate(context.Background(), generate.Input{Title: "T", Summary: "S"})
+	if err != nil {
+		t.Fatalf("Generate(flaky) returned error: %v", err)
+	}
+	if text != "recovered draft" {
+		t.Errorf("Generate(flaky) = %q, want recovered draft", text)
+	}
+	if hits != 3 {
+		t.Errorf("attempts = %d, want 3", hits)
+	}
+}
+
+func TestOpenAICompatNoRetryOnAuthError(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
+	}))
+	defer srv.Close()
+
+	g := generate.New(srv.URL, "m", "bad", "", slog.Default())
+	if _, err := g.Generate(context.Background(), generate.Input{Title: "T"}); err == nil {
+		t.Error("Generate(401) = nil, want error")
+	}
+	if hits != 1 {
+		t.Errorf("attempts = %d, want 1", hits)
 	}
 }

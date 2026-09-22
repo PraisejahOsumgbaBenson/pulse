@@ -1,4 +1,4 @@
-// Command pulse runs the Discord bot: slash commands, the LinkedIn OAuth
+// Command pulse runs the Telegram bot: commands, the LinkedIn OAuth
 // callback server, and the reminder scheduler in one process.
 package main
 
@@ -14,13 +14,13 @@ import (
 	"time"
 
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/config"
-	"github.com/PraisejahOsumgbaBenson/pulse/internal/discord"
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/feeds"
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/generate"
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/linkedin"
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/publisher"
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/scheduler"
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/store"
+	"github.com/PraisejahOsumgbaBenson/pulse/internal/telegram"
 )
 
 func main() {
@@ -51,17 +51,17 @@ func run() error {
 	gen := generate.New(cfg.LLMBaseURL, cfg.LLMModel, cfg.LLMAPIKey, cfg.LLMStyle, logger)
 	pub := publisher.New(st, li, logger)
 
-	bot, err := discord.New(cfg.DiscordToken, discord.Deps{
-		Store:        st,
-		Feeds:        feedSvc,
-		Gen:          gen,
-		LinkedIn:     li,
-		Pub:          pub,
-		Location:     loc,
-		TimezoneName: cfg.Timezone,
-		OwnerID:      cfg.DiscordOwnerID,
-		DevGuildID:   cfg.DevGuildID,
-		Logger:       logger,
+	bot, err := telegram.New(cfg.TelegramToken, telegram.Deps{
+		Store:              st,
+		Feeds:              feedSvc,
+		Gen:                gen,
+		LinkedIn:           li,
+		LinkedInConfigured: cfg.HasLinkedIn(),
+		Pub:                pub,
+		Location:           loc,
+		TimezoneName:       cfg.Timezone,
+		OwnerID:            cfg.TelegramOwnerID,
+		Logger:             logger,
 	})
 	if err != nil {
 		st.Close()
@@ -74,8 +74,8 @@ func run() error {
 		if name == "" {
 			name = "your LinkedIn profile"
 		}
-		if err := bot.SendText(ctx, res.DiscordUserID, "LinkedIn connected as "+name+". Reminders will post on your approval."); err != nil {
-			logger.Warn("confirm link over dm", "err", err)
+		if err := bot.SendText(ctx, res.TelegramUserID, "LinkedIn connected as "+name+". Reminders will post on your approval."); err != nil {
+			logger.Warn("confirm link over telegram", "err", err)
 		}
 	}, logger)
 	mux.Handle(callbackPath(cfg.LinkedInRedirectURI), cb.Handler())
@@ -87,12 +87,13 @@ func run() error {
 		}
 	}()
 
-	sched := scheduler.New(st, feedSvc, gen, bot, pub, loc, cfg.Timezone, 30*time.Second, logger)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	sched := scheduler.New(st, feedSvc, gen, bot, pub, loc, cfg.Timezone, 30*time.Second, logger)
 	go sched.Run(ctx)
 
-	if err := bot.Start(); err != nil {
+	if err := bot.Start(ctx); err != nil {
 		stop()
 		st.Close()
 		return err
@@ -104,7 +105,7 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
-	_ = bot.Close()
+	bot.Stop()
 	_ = st.Close()
 	return nil
 }

@@ -8,7 +8,7 @@ import (
 
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("DISCORD_TOKEN", "discord-token")
+	t.Setenv("TELEGRAM_TOKEN", "telegram-token")
 	t.Setenv("LINKEDIN_CLIENT_ID", "client-id")
 	t.Setenv("LINKEDIN_CLIENT_SECRET", "client-secret")
 	t.Setenv("LINKEDIN_REDIRECT_URI", "http://localhost:8081/oauth/linkedin/callback")
@@ -19,6 +19,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.TelegramToken != "telegram-token" {
+		t.Errorf("TelegramToken = %q, want telegram-token", cfg.TelegramToken)
 	}
 	if cfg.LinkedInAPIVersion != "202602" {
 		t.Errorf("LinkedInAPIVersion = %q, want 202602", cfg.LinkedInAPIVersion)
@@ -46,13 +49,35 @@ func TestLoadAppliesDefaults(t *testing.T) {
 }
 
 func TestLoadRejectsMissingRequired(t *testing.T) {
-	t.Setenv("DISCORD_TOKEN", "")
+	t.Setenv("TELEGRAM_TOKEN", "")
 	t.Setenv("LINKEDIN_CLIENT_ID", "")
 	t.Setenv("LINKEDIN_CLIENT_SECRET", "")
 	t.Setenv("LINKEDIN_REDIRECT_URI", "")
 	_, err := config.Load()
 	if err == nil {
 		t.Fatal("Load() = nil error, want missing-variable error")
+	}
+}
+
+func TestLoadAllowsMissingLinkedIn(t *testing.T) {
+	t.Setenv("TELEGRAM_TOKEN", "telegram-token")
+	t.Setenv("LINKEDIN_CLIENT_ID", "")
+	t.Setenv("LINKEDIN_CLIENT_SECRET", "")
+	t.Setenv("LINKEDIN_REDIRECT_URI", "")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() without LinkedIn returned error: %v", err)
+	}
+	if cfg.HasLinkedIn() {
+		t.Error("HasLinkedIn() = true, want false with no credentials")
+	}
+	setRequiredEnv(t)
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if !cfg.HasLinkedIn() {
+		t.Error("HasLinkedIn() = false, want true with credentials set")
 	}
 }
 

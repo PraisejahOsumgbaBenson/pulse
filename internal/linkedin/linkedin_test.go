@@ -235,7 +235,7 @@ func TestCallbackServerEndToEnd(t *testing.T) {
 		notified = res
 	}, slog.Default())
 
-	if err := st.SaveOAuthState(ctx, store.OAuthState{State: "st1", DiscordUserID: "du1", Verifier: "v1"}); err != nil {
+	if err := st.SaveOAuthState(ctx, store.OAuthState{State: "st1", TelegramUserID: 444, Verifier: "v1"}); err != nil {
 		t.Fatalf("SaveOAuthState() returned error: %v", err)
 	}
 	rec := httptest.NewRecorder()
@@ -254,7 +254,7 @@ func TestCallbackServerEndToEnd(t *testing.T) {
 	if tok.AccessToken != "a1" || tok.PersonID != "urn:li:person:u1" || tok.PersonName != "Callback User" {
 		t.Errorf("stored token = %+v, want exchanged values", tok)
 	}
-	if notified.DiscordUserID != "du1" || notified.PersonName != "Callback User" {
+	if notified.TelegramUserID != 444 || notified.PersonName != "Callback User" {
 		t.Errorf("onConnected = %+v, want du1 and name", notified)
 	}
 

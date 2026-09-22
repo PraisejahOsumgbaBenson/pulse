@@ -10,13 +10,12 @@ import (
 
 // Config holds every setting Pulse needs to run.
 type Config struct {
-	// DiscordToken authenticates the bot to the Discord gateway and REST API.
-	DiscordToken string
-	// DiscordOwnerID optionally restricts commands to a single Discord user ID.
-	DiscordOwnerID string
-	// DevGuildID optionally registers slash commands to one guild for instant
-	// propagation while developing. Empty means register globally.
-	DevGuildID string
+	// TelegramToken authenticates the bot to the Telegram Bot API.
+	// Talk to @BotFather to create a bot and get its token.
+	TelegramToken string
+	// TelegramOwnerID optionally restricts commands to a single Telegram
+	// user id. Leave empty and the first user to run /start becomes the owner.
+	TelegramOwnerID string
 
 	// LinkedInClientID and LinkedInClientSecret identify the LinkedIn developer app.
 	LinkedInClientID     string
@@ -47,9 +46,8 @@ type Config struct {
 // Load reads the environment, applies defaults, and validates required values.
 func Load() (Config, error) {
 	cfg := Config{
-		DiscordToken:         os.Getenv("DISCORD_TOKEN"),
-		DiscordOwnerID:       os.Getenv("DISCORD_OWNER_ID"),
-		DevGuildID:           os.Getenv("DEV_GUILD_ID"),
+		TelegramToken:        os.Getenv("TELEGRAM_TOKEN"),
+		TelegramOwnerID:      os.Getenv("TELEGRAM_OWNER_ID"),
 		LinkedInClientID:     os.Getenv("LINKEDIN_CLIENT_ID"),
 		LinkedInClientSecret: os.Getenv("LINKEDIN_CLIENT_SECRET"),
 		LinkedInRedirectURI:  os.Getenv("LINKEDIN_REDIRECT_URI"),
@@ -64,19 +62,10 @@ func Load() (Config, error) {
 		LogLevel:             envOr("LOG_LEVEL", "info"),
 	}
 
-	var missing []string
-	for name, value := range map[string]string{
-		"DISCORD_TOKEN":          cfg.DiscordToken,
-		"LINKEDIN_CLIENT_ID":     cfg.LinkedInClientID,
-		"LINKEDIN_CLIENT_SECRET": cfg.LinkedInClientSecret,
-		"LINKEDIN_REDIRECT_URI":  cfg.LinkedInRedirectURI,
-	} {
-		if strings.TrimSpace(value) == "" {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) > 0 {
-		return Config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+	// Only the Telegram token is required to start. LinkedIn values can
+	// wait until auto posting matters; /link explains itself until then.
+	if strings.TrimSpace(cfg.TelegramToken) == "" {
+		return Config{}, fmt.Errorf("missing required environment variables: TELEGRAM_TOKEN")
 	}
 
 	if _, err := time.LoadLocation(cfg.Timezone); err != nil {
@@ -107,4 +96,11 @@ func (c Config) TimeLocation() (*time.Location, error) {
 // HasLLM reports whether an LLM API key is configured.
 func (c Config) HasLLM() bool {
 	return strings.TrimSpace(c.LLMAPIKey) != ""
+}
+
+// HasLinkedIn reports whether the LinkedIn app credentials are configured.
+func (c Config) HasLinkedIn() bool {
+	return strings.TrimSpace(c.LinkedInClientID) != "" &&
+		strings.TrimSpace(c.LinkedInClientSecret) != "" &&
+		strings.TrimSpace(c.LinkedInRedirectURI) != ""
 }
