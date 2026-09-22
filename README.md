@@ -4,6 +4,11 @@ A Telegram bot that keeps your LinkedIn presence alive without the daily grind.
 It watches your sources, drafts posts with an LLM, reminds you on a schedule
 over Telegram DM, and publishes to LinkedIn when you approve.
 
+Pulse is self-hosted and single-owner: you run your own copy with your own
+Telegram bot, and the first person to send `/start` owns it. Nobody else
+can use your bot, and you cannot use someone else's. To get your own,
+follow the three steps below.
+
 ## How it works
 
 ```mermaid
@@ -41,13 +46,17 @@ brings it back in an hour.
 
 ## Quickstart
 
+Prerequisites: Go 1.26 or newer and a Telegram account.
+
 ```sh
-cp .env.example .env   # fill in Telegram token, LinkedIn app, optional LLM key
+git clone https://github.com/PraisejahOsumgbaBenson/pulse.git
+cd pulse
+cp .env.example .env   # add your Telegram token, see Setup step 1
 go run ./cmd/bot
 ```
 
-Then message the bot: `/link` to connect LinkedIn, `/source_add <url>` to add a
-source, `/schedule_set 09:00 monday wednesday friday` to set reminders.
+Then message your bot: `/start` to claim it, `/topic` followed by any
+thought for an instant draft, `/schedule` to set reminders step by step.
 
 ## Setup
 
@@ -79,7 +88,7 @@ yourself. Connect the app whenever auto posting matters:
    `http://localhost:8081/oauth/linkedin/callback` for local runs or
    `https://your-host/oauth/linkedin/callback` in production. Copy the
    Client ID and Client Secret into the env file.
-3. DM the bot `/link`, open the connect link, sign in to LinkedIn and
+3. Message the bot `/link`, open the connect link, sign in to LinkedIn and
    approve. The bot confirms when it is linked.
 
 One honest limitation: LinkedIn consumer tokens expire after about 60 days
