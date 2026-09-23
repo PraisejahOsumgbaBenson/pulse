@@ -156,9 +156,9 @@ func (b *Bot) onPlainText(ctx context.Context, userID, chatID int64, text string
 }
 
 func (b *Bot) cmdStart(ctx context.Context, chatID int64) {
-	b.reply(ctx, chatID, `Pulse drafts LinkedIn posts from your sources and reminds you to post.
+	b.reply(ctx, chatID, `Pulse drafts LinkedIn posts and reminds you to post.
 
-Send /link to connect LinkedIn, add a source with /source_add, then set reminders with /schedule_set. Every reminder arrives here with buttons: Approve posts it to LinkedIn, Edit lets you send revised text, Regenerate draws another source.`)
+Just type any thought and I turn it into a draft. You can also try /topic, /trending, /draft and /schedule. Every reminder arrives here with buttons: Approve posts it (or hands you the text until LinkedIn is connected), Edit takes revised text, Regenerate draws again. Send /link to connect LinkedIn for auto posting.`)
 }
 
 func (b *Bot) cmdLink(ctx context.Context, userID, chatID int64) {
