@@ -100,7 +100,9 @@ survives untouched.
 
 ### 3. Environment
 
-See [.env.example](.env.example) for every variable. To start, only
+See [.env.example](.env.example) for every variable. Pulse loads `.env`
+from the working directory at startup. Real environment variables win, so
+a container or process manager can override the file. To start, only
 `TELEGRAM_TOKEN` is required; LinkedIn values can wait until you want
 auto posting. Leave `LLM_API_KEY` empty to use the built-in offline
 generator. For free AI drafts, create a key at
