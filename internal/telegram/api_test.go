@@ -2,8 +2,11 @@ package telegram
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -100,6 +103,29 @@ func TestGetUpdatesParsesCallback(t *testing.T) {
 	}
 	if updates[0].CallbackQuery.Data != "pulse:approve:7" {
 		t.Errorf("data = %q, want pulse:approve:7", updates[0].CallbackQuery.Data)
+	}
+}
+
+type errorTransport func(*http.Request) (*http.Response, error)
+
+func (f errorTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestTransportErrorRedactsToken(t *testing.T) {
+	c := NewClient("secret-token")
+	c.base = "https://api.telegram.org/botsecret-token"
+	c.http = &http.Client{Transport: errorTransport(func(r *http.Request) (*http.Response, error) {
+		return nil, &url.Error{Op: r.Method, URL: r.URL.String(), Err: errors.New("boom")}
+	})}
+
+	_, err := c.GetMe(t.Context())
+	if err == nil {
+		t.Fatal("GetMe() = nil error, want transport error")
+	}
+	if strings.Contains(err.Error(), "secret-token") {
+		t.Fatalf("error leaked the token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[redacted]") {
+		t.Fatalf("error did not redact the URL: %v", err)
 	}
 }
 

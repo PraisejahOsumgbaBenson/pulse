@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -103,17 +104,36 @@ type API interface {
 
 // Client speaks the Telegram Bot API over HTTPS with plain JSON.
 type Client struct {
-	base string
-	http *http.Client
+	base  string
+	token string
+	http  *http.Client
 }
 
 // NewClient builds a Client for one bot token.
 func NewClient(token string) *Client {
 	return &Client{
-		base: "https://api.telegram.org/bot" + token,
-		http: &http.Client{Timeout: 70 * time.Second},
+		base:  "https://api.telegram.org/bot" + token,
+		token: token,
+		http:  &http.Client{Timeout: 70 * time.Second},
 	}
 }
+
+// redactedError keeps the original error chain but removes the bot token from
+// its message. Transport errors include the request URL, and that URL carries
+// the token.
+type redactedError struct {
+	cause error
+	token string
+}
+
+func (e redactedError) Error() string {
+	if e.token == "" {
+		return e.cause.Error()
+	}
+	return strings.ReplaceAll(e.cause.Error(), e.token, "[redacted]")
+}
+
+func (e redactedError) Unwrap() error { return e.cause }
 
 type apiEnvelope struct {
 	OK          bool            `json:"ok"`
@@ -133,14 +153,14 @@ func (c *Client) call(ctx context.Context, method string, payload any, result an
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/"+method, body)
 	if err != nil {
-		return fmt.Errorf("build %s request: %w", method, err)
+		return fmt.Errorf("build %s request: %w", method, redactedError{cause: err, token: c.token})
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("call %s: %w", method, err)
+		return fmt.Errorf("call %s: %w", method, redactedError{cause: err, token: c.token})
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
