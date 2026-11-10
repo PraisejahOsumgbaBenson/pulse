@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -68,7 +69,6 @@ func run() error {
 		return err
 	}
 
-	mux := http.NewServeMux()
 	cb := linkedin.NewCallbackServer(st, li, func(ctx context.Context, res linkedin.ConnectResult) {
 		name := res.PersonName
 		if name == "" {
@@ -78,8 +78,8 @@ func run() error {
 			logger.Warn("confirm link over telegram", "err", err)
 		}
 	}, logger)
-	mux.Handle(callbackPath(cfg.LinkedInRedirectURI), cb.Handler())
-	httpSrv := &http.Server{Addr: cfg.OAuthAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	handler := newHTTPHandler(cb, cfg.HasLinkedIn(), callbackPath(cfg.LinkedInRedirectURI))
+	httpSrv := &http.Server{Addr: cfg.OAuthAddr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		logger.Info("oauth callback listening", "addr", cfg.OAuthAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -109,6 +109,56 @@ func run() error {
 	_ = st.Close()
 	return nil
 }
+
+// newHTTPHandler serves the OAuth callback, a health check, and a small
+// landing page so a self-hosted instance can be checked from a browser.
+func newHTTPHandler(cb *linkedin.CallbackServer, linkedInConfigured bool, callbackPath string) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", healthHandler)
+	if linkedInConfigured {
+		mux.Handle(callbackPath, cb.Handler())
+		// A redirect URI with no path owns "/", so the landing page would
+		// shadow the callback. Keep the callback and skip the page.
+		if callbackPath == "/" {
+			return mux
+		}
+	}
+	mux.HandleFunc("/", landingHandler)
+	return mux
+}
+
+func healthHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, "ok\n")
+}
+
+func landingHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, landingPage)
+}
+
+const landingPage = `<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 36rem; margin: 4rem auto; padding: 0 1rem; line-height: 1.6; }
+  code { background: rgba(127, 127, 127, .15); padding: .1rem .3rem; border-radius: .25rem; }
+</style>
+<h1>Pulse is running</h1>
+<p>This host receives LinkedIn OAuth callbacks for the Pulse Telegram bot.</p>
+<p>Message your bot on Telegram to claim it and set your schedule.</p>
+<p>Health check: <code>/healthz</code></p>
+</html>
+`
 
 // callbackPath extracts the mount path from the registered redirect URI.
 func callbackPath(redirectURI string) string {

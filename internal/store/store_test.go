@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,6 +21,18 @@ func openTestStore(t *testing.T) (*store.Store, context.Context) {
 	}
 	t.Cleanup(func() { st.Close() })
 	return st, ctx
+}
+
+func TestOpenCreatesDatabaseDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "pulse.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+	defer st.Close()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("database file was not created: %v", err)
+	}
 }
 
 func TestKVRoundTrip(t *testing.T) {

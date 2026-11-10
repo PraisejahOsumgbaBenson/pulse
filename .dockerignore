@@ -1,0 +1,12 @@
+.git
+.github
+.env
+.env.*
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+bin/
+dist/
+.vscode/
+.DS_Store

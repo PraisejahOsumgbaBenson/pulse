@@ -1,5 +1,7 @@
 # Pulse
 
+[![CI](https://github.com/PraisejahOsumgbaBenson/pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/PraisejahOsumgbaBenson/pulse/actions/workflows/ci.yml)
+
 A Telegram bot that keeps your LinkedIn presence alive without the daily grind.
 It watches your sources, drafts posts with an LLM, reminds you on a schedule
 over Telegram DM, and publishes to LinkedIn when you approve.
@@ -86,8 +88,8 @@ yourself. Connect the app whenever auto posting matters:
    self-serve for posting to your own profile, no review queue.
 2. On the Auth tab add your callback URL to Authorized redirect URLs, e.g.
    `http://localhost:8081/oauth/linkedin/callback` for local runs or
-   `https://your-host/oauth/linkedin/callback` in production. Copy the
-   Client ID and Client Secret into the env file.
+   `https://your-host/oauth/linkedin/callback` on a public server with
+   HTTPS. Copy the Client ID and Client Secret into the env file.
 3. Message the bot `/link`, open the connect link, sign in to LinkedIn and
    approve. The bot confirms when it is linked.
 
@@ -107,6 +109,11 @@ generator. For free AI drafts, create a key at
 and `LLM_MODEL` to a flash model such as `gemini-3.5-flash-lite`. Any
 OpenAI-compatible provider works the same way. `LLM_STYLE` tunes the
 voice, e.g. warm and conversational.
+
+Set `TIMEZONE` to your IANA zone, for example `Africa/Lagos`. Containers
+have no local timezone, so leaving it unset falls back to UTC. The database
+defaults to `pulse.db`; Docker Compose sets it to `/data/pulse.db` on the
+named volume.
 
 ## Commands
 
@@ -130,18 +137,52 @@ voice, e.g. warm and conversational.
 | `/cancel` | Drop a pending edit |
 | `/help` | Command list |
 
-## Deploy
+## Hosting
 
-Docker, one static binary with SQLite on a volume:
+Pulse is one Go binary and a SQLite file. It needs a machine that stays
+awake, and a public HTTPS URL for the LinkedIn callback. Any host works:
+your Mac, a Raspberry Pi, or a small VPS.
+
+### Docker Compose
+
+```sh
+cp .env.example .env   # add TELEGRAM_TOKEN
+docker compose up -d --build
+curl http://localhost:8081/healthz
+```
+
+The database lives in the `pulse-data` volume. The container runs as uid
+65532 and writes to `/data`. Compose restarts it unless you stop it.
+
+To reach LinkedIn from a server, put Pulse behind Caddy or Nginx and set
+`LINKEDIN_REDIRECT_URI` to the public URL. A minimal Caddyfile:
+
+```
+pulse.example.com {
+    reverse_proxy 127.0.0.1:8081
+}
+```
+
+### Docker without Compose
 
 ```sh
 docker build -t pulse .
-docker run -d --name pulse --env-file .env -v pulse-data:/data -p 8081:8081 pulse
+docker run -d --name pulse --restart unless-stopped \
+  --env-file .env -e DB_PATH=/data/pulse.db \
+  -v pulse-data:/data -p 8081:8081 pulse
 ```
 
-A Fly.io example lives in [deploy/fly.toml](deploy/fly.toml): create a
-volume for `/data`, set secrets with `fly secrets set`, deploy. The callback
-URL registered in your LinkedIn app must match the public host.
+### Local
+
+```sh
+go run ./cmd/bot
+```
+
+### Keep it running
+
+Docker Compose handles restarts. On a bare machine, use systemd or launchd.
+If the machine sleeps, reminders do not fire. Nothing here depends on a
+specific hosting provider. The health check lives at `/healthz`.
 
 ## Development
 
