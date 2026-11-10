@@ -1,0 +1,18 @@
+services:
+  pulse:
+    build: .
+    image: pulse:local
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file:
+      - .env
+    environment:
+      DB_PATH: /data/pulse.db
+      OAUTH_ADDR: ":8081"
+    ports:
+      - "8081:8081"
+    volumes:
+      - pulse-data:/data
+
+volumes:
+  pulse-data:

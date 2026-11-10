@@ -28,6 +28,3 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
-
-# Fly.io and deploy secrets
-fly.toml.local
