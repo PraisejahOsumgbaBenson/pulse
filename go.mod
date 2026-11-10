@@ -3,6 +3,7 @@ module github.com/PraisejahOsumgbaBenson/pulse
 go 1.26.0
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/mmcdole/gofeed v1.4.2
 	golang.org/x/oauth2 v0.37.0
 	modernc.org/sqlite v1.59.0

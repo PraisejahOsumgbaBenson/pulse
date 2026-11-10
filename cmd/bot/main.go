@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/joho/godotenv"
 
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/config"
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/feeds"
@@ -32,6 +35,9 @@ func main() {
 }
 
 func run() error {
+	if err := loadDotEnv(); err != nil {
+		return err
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -107,6 +113,15 @@ func run() error {
 	_ = httpSrv.Shutdown(shutdownCtx)
 	bot.Stop()
 	_ = st.Close()
+	return nil
+}
+
+// loadDotEnv reads .env when present. Real environment variables win, so a
+// container or process manager can override the file.
+func loadDotEnv() error {
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("load .env: %w", err)
+	}
 	return nil
 }
 

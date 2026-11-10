@@ -4,11 +4,36 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/PraisejahOsumgbaBenson/pulse/internal/linkedin"
 )
+
+func TestLoadDotEnv(t *testing.T) {
+	const key = "PULSE_TEST_DOTENV"
+	os.Unsetenv(key)
+	t.Cleanup(func() { os.Unsetenv(key) })
+	t.Chdir(t.TempDir())
+
+	if err := os.WriteFile(".env", []byte(key+"=from-file\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	if err := loadDotEnv(); err != nil {
+		t.Fatalf("loadDotEnv() returned error: %v", err)
+	}
+	if got := os.Getenv(key); got != "from-file" {
+		t.Fatalf("%s = %q, want from-file", key, got)
+	}
+}
+
+func TestLoadDotEnvMissingIsFine(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := loadDotEnv(); err != nil {
+		t.Fatalf("loadDotEnv() without .env returned error: %v", err)
+	}
+}
 
 func testHandler(linkedInConfigured bool, callbackPath string) http.Handler {
 	cb := linkedin.NewCallbackServer(nil, nil, nil, slog.Default())
